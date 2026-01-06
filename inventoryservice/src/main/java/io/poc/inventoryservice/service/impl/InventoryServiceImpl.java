@@ -1,27 +1,29 @@
 package io.poc.inventoryservice.service.impl;
 
 import io.poc.inventoryservice.entity.Food;
+import io.poc.inventoryservice.exception.OutOfStockException;
 import io.poc.inventoryservice.model.FoodDto;
 import io.poc.inventoryservice.model.OrderItemDto;
 import io.poc.inventoryservice.repository.InventoryRepository;
 import io.poc.inventoryservice.service.InventoryService;
+import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
 
-import java.time.Duration;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 public class InventoryServiceImpl implements InventoryService {
 
     private final InventoryRepository inventoryRepository;
+
     private final Logger log = LoggerFactory.getLogger(InventoryServiceImpl.class);
 
-    public InventoryServiceImpl(InventoryRepository inventoryRepository) {
+    public InventoryServiceImpl(
+            InventoryRepository inventoryRepository
+    ) {
         this.inventoryRepository = inventoryRepository;
         log.info("Initializing InventoryServiceImpl");
     }
@@ -31,72 +33,66 @@ public class InventoryServiceImpl implements InventoryService {
         log.info("Entering InventoryController::getMenu()");
         return inventoryRepository.getAllFood()
                 .stream()
-                .map(food -> {
-                    return FoodDto.builder()
-                            .id(food.getFoodId())
-                            .name(food.getName())
-                            .price(food.getPrice())
-                            .description(food.getDescription())
-                            .stock(food.getStock())
-                            .build();
-                        }
+                .map(food -> FoodDto.builder()
+                        .id(food.getFoodId())
+                        .name(food.getName())
+                        .price(food.getPrice())
+                        .description(food.getDescription())
+                        .stock(food.getStock())
+                        .build()
                 )
                 .peek(food -> log.info(food.toString()))
                 .collect(Collectors.toList());
     }
 
+    @Transactional
     @Override
-    public Mono<Boolean> reduceStock(List<OrderItemDto> order) {
+    public void reserve(List<OrderItemDto> items) {
 
-        log.info("Entering InventoryController::reduceStock()");
+        log.info("Entering InventoryController::reserve()");
+        for (OrderItemDto item : items) {
 
-        if(!order.isEmpty()) {
-            log.info("Order size: {}", order.size());
+            log.info("Setting reservation for food: {}", item.getFoodId());
+            Food food = inventoryRepository.lockFoodById(item.getFoodId());
 
-            List<Food> reducedQuantity = order
-                    .stream()
-                    .map(orderItem -> {
-                        Food food = inventoryRepository.getByFoodId(orderItem.getFoodId());
-                        food.setStock(food.getStock() - orderItem.getQuantity());
-                        log.info("Stock reduced for food: {} from: {} to {}", food.getName(), food.getStock(), food.getStock() - orderItem.getQuantity());
-                        return food;
-                    })
-                    .collect(Collectors.toList());
+            if (food.getStock() < item.getQuantity()) {
+                throw new OutOfStockException("Out of stock");
+            }
 
-            inventoryRepository.saveAll(reducedQuantity);
-            log.info("InventoryController::reduceStock() successful");
-            log.info("Exiting InventoryController::reduceStock()");
-
-            return Mono.just(true)
-                    .delayElement(Duration.ofSeconds(10));
+            food.setStock(food.getStock() - item.getQuantity());
         }
-        log.info("Order is empty");
-
-        log.info("InventoryController::reduceStock() failed");
-        log.info("Exiting InventoryController::reduceStock()");
-        return Mono.just(false)
-                .delayElement(Duration.ofSeconds(10));
+        log.info("Exiting InventoryController::reserve()");
     }
 
     @Override
-    public Set<FoodDto> getStock(List<Long> foodIds) {
-        log.info("Entering InventoryController::getStock()");
+    @Transactional
+    public void confirm(List<OrderItemDto> items) {
+        log.info("Entering InventoryController::confirm()");
 
-        if(foodIds.isEmpty()) {
-            log.info("Empty food id list.");
-            throw new IllegalArgumentException("foodIds is empty");
+        for (OrderItemDto item : items) {
+            log.info("OrderItemDto: {}", item);
+            Food food = inventoryRepository.lockFoodById(item.getFoodId());
+
+            log.info("Reservation confirmation: {}", food);
+            food.setReservedCount(food.getReservedCount() - item.getQuantity());
+            food.setStock(food.getStock() - item.getQuantity());
         }
+        log.info("Exiting InventoryController::confirm()");
+    }
 
-        log.info("Food ids found of size: {}", foodIds.size());
-        return inventoryRepository.getFoodByIds(foodIds)
-                .stream()
-                .map(
-                        food-> FoodDto.builder()
-                                .name(food.getName())
-                                .stock(food.getStock())
-                .build())
-                .peek(food -> log.info(food.toString()))
-                .collect(Collectors.toSet());
+    @Override
+    @Transactional
+    public void cancel(List<OrderItemDto> items) {
+    log.info("Entering InventoryController::cancel()");
+        for (OrderItemDto item : items) {
+
+            Food food = inventoryRepository.lockFoodById(item.getFoodId());
+
+            log.info("Resetting reservation due to failure");
+            food.setReservedCount(food.getReservedCount() - item.getQuantity());
+        }
+        log.info("Exiting InventoryController::cancel()");
     }
 
 }
+

@@ -7,10 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Mono;
 
 import java.util.List;
-import java.util.Set;
 
 @RestController
 @RequestMapping("/api/v1/inventory-service")
@@ -34,24 +32,13 @@ public class InventoryController {
         return ResponseEntity.ok().body(foodList);
     }
 
-    @GetMapping("/stock")
-    public ResponseEntity<Set<FoodDto>> getStock(@RequestBody List<Long> foodIds) {
-        log.info("Entering InventoryController::getStock()");
+    @PostMapping("/reserve")
+    public ResponseEntity<Void> reserve(@RequestBody List<OrderItemDto> orderItems) {
+        log.info("Entering InventoryController::reserve()");
 
-        Set<FoodDto> stock = inventoryService.getStock(foodIds);
+        inventoryService.reserve(orderItems);
+        log.info("Exiting InventoryController::reserve()");
 
-        log.info("Exiting InventoryController::getStock()");
-        return ResponseEntity.ok(stock);
-    }
-
-    @PutMapping("/reduce-stock")
-    public ResponseEntity<Mono<Boolean>> reduceStock(
-            @RequestBody List<OrderItemDto> orderItems
-    ) {
-        log.info("Entering InventoryController::reduceStock()");
-        Mono<Boolean> status = inventoryService.reduceStock(orderItems);
-
-        log.info("Exiting InventoryController::reduceStock()");
-        return ResponseEntity.ok().body(status);
+        return ResponseEntity.ok().build();
     }
 }
