@@ -8,6 +8,5 @@ import org.springframework.web.bind.annotation.RequestParam;
 public interface NotificationProxy {
 
     @PostMapping(path = "api/v1/notification-service/notify")
-//    void notifyUser(@RequestParam String email, @RequestParam Long orderId);
-    void notifyUser(@RequestParam String email);
+    void notifyUser(@RequestParam String email, @RequestParam String paymentStatus);
 }

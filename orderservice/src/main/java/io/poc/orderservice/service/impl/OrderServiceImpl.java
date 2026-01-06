@@ -6,6 +6,7 @@ import io.poc.orderservice.model.*;
 import io.poc.orderservice.repository.OrderItemRepository;
 import io.poc.orderservice.repository.OrderRepository;
 import io.poc.orderservice.service.OrderService;
+import org.apache.coyote.BadRequestException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -19,7 +20,9 @@ import reactor.core.publisher.Mono;
 
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -67,6 +70,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public Mono<OrderDto> placeOrder(OrderDto orderRequest) {
 
+        log.info("Entering OrderServiceImpl::placeOrder");
         log.info("Received order placement request: {}", orderRequest);
 
         // Build OrderItems
@@ -81,6 +85,18 @@ public class OrderServiceImpl implements OrderService {
 
         log.info("Mapped {} OrderItems", orderItems.size());
 
+        List<Long> foodsIds = orderItems.stream()
+                .map(OrderItem::getFoodId)
+                .toList();
+
+        getStock(foodsIds).stream().map(foodDto -> {
+            int stock = foodDto.getStock();
+            if(stock < 0){
+                throw new IllegalArgumentException("Insufficient stock for product: " + foodDto.getName());
+            }
+            return null;
+        });
+
         // Build Order
         Order order = Order.builder()
                 .items(orderItems)
@@ -91,6 +107,8 @@ public class OrderServiceImpl implements OrderService {
                 .createdAt(Timestamp.valueOf(LocalDateTime.now()))
                 .build();
 
+        log.info("Order created and status set as: {}", order.getOrderStatus());
+
         // Set back-reference
         orderItems.forEach(item -> item.setOrder(order));
 
@@ -99,6 +117,7 @@ public class OrderServiceImpl implements OrderService {
         log.info("Order persisted with ID: {}", order.getOrderId());
 
         List<OrderItemDto> requestItems = orderRequest.getItems();
+        log.info("Food order requested: {}", requestItems);
 
         if (!"CREATED".equalsIgnoreCase(order.getOrderStatus())) {
             log.warn("Order not in CREATED state. Returning early.");
@@ -119,6 +138,7 @@ public class OrderServiceImpl implements OrderService {
 
             log.info("Payment response received for OrderID={}: {}", order.getOrderId(), payment);
             log.info("Evaluating payment status: {}", payment.getStatus());
+
             if (!"COMPLETE".equalsIgnoreCase(payment.getStatus())) {
 
                 log.error("Payment FAILED for OrderID={}", order.getOrderId());
@@ -157,11 +177,27 @@ public class OrderServiceImpl implements OrderService {
                 orderRepository.save(order);
 
                 log.info("Order {} final status: {}", order.getOrderId(), order.getOrderStatus());
-
+                log.info("Exiting OrderServiceImpl::placeOrder");
                 return Mono.just(map(order, requestItems));
             });
 
         }).doOnError(e -> log.error("Order processing failed", e));
+    }
+
+    private List<FoodDto> getStock(List<Long> foodIds){
+        HttpEntity<List<Long>> ids =  new HttpEntity<>(foodIds);
+
+        if(!foodIds.isEmpty()) {
+            return restTemplate.exchange(
+                    INVENTORY_SERVICE + "/stock",
+                    HttpMethod.GET,
+                    ids,
+                    new ParameterizedTypeReference<List<FoodDto>>() {
+                    }
+            ).getBody();
+        } else {
+            return Collections.emptyList();
+        }
     }
 
     private OrderDto map(Order order, List<OrderItemDto> items) {

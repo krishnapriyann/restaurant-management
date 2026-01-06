@@ -2,5 +2,5 @@ package io.poc.notificationservice.service;
 
 public interface NotificationService {
 
-    void notifyUser(String email);
+    Boolean notifyUser(String email, String paymentStatus);
 }

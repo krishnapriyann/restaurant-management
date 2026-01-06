@@ -8,11 +8,21 @@ import org.springframework.stereotype.Service;
 @Service
 public class NotificationServiceImpl implements NotificationService {
 
-    private final Logger logger = LoggerFactory.getLogger(NotificationServiceImpl.class);
+    private final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
     @Override
-    public void notifyUser(String email) {
-        logger.info("notifyUser");
-        System.out.println("Payment for " + email + " done successfully");
+    public Boolean notifyUser(String email, String  paymentStatus) {
+        log.info("Entering NotificationServiceImpl::notifyUser");
+
+        if(paymentStatus.equalsIgnoreCase("COMPLETE")) {
+            System.out.println("Payment for " + email + " done Successfully");
+            return true;
+        }
+
+        System.out.println("Payment for " + email + " Failed");
+        log.info("Payment for {} Failed", email);
+        log.info("Exiting NotificationServiceImpl::notifyUser");
+
+        return false;
     }
 }
