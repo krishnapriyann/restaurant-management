@@ -22,6 +22,7 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -209,4 +210,74 @@ public class OrderServiceImpl implements OrderService {
                 .email(order.getEmail())
                 .build();
     }
+
+    public Mono<OrderDto> bookOrder(OrderDto order) {
+        log.info("OrderServiceImpl::bookOrder()");
+        log.info("Booking order request for order: {}", order);
+
+        log.info("Building order items and persisting order");
+        List<OrderItem> orderItemsList = buildOrderItems(order);
+        Order orderToPersist = setOrderStatus(order, "CREATED", orderItemsList);
+        orderRepository.save(orderToPersist);
+        log.info("Order saved successfully with status: {}", orderToPersist.getOrderStatus());
+
+        HttpEntity<List<OrderItemDto>> orderItems = new HttpEntity<>(buildOrderItemDtos(orderItemsList));
+        Boolean reserved = restTemplate.getForObject(
+                INVENTORY_SERVICE + "/reserve",
+                Boolean.class,
+                orderItems
+        );
+
+    }
+
+    private List<OrderItem> buildOrderItems(OrderDto orderRequest) {
+        log.info("Entering OrderServiceImpl::buildOrderItems()");
+
+        return orderRequest.getItems()
+                .stream()
+                .map(item -> OrderItem.builder()
+                        .foodId(item.getFoodId())
+                        .quantity(item.getQuantity())
+                        .price(item.getPrice())
+                        .build())
+                .peek(orderItem -> log.info("Order Items build successfully"))
+                .toList();
+    }
+
+    private List<OrderItemDto> buildOrderItemDtos(List<OrderItem> orderItems) {
+        return orderItems.stream()
+                .map(item -> OrderItemDto.builder()
+                .foodId(item.getFoodId())
+                .quantity(item.getQuantity())
+                .price(item.getPrice())
+                        .build())
+                .peek(orderItem -> log.info("Order Items build successfully"))
+                .toList();
+    }
+
+    private Order setOrderStatus(OrderDto orderDto, String status, List<OrderItem> items) {
+        log.info("Entering OrderServiceImpl::setOrderStatus()");
+
+        Order order = Order.builder()
+                .items(items)
+                .userId(orderDto.getUserId())
+                .orderValue(orderDto.getOrderValue())
+                .orderStatus(status)
+                .email(orderDto.getEmail())
+                .createdAt(Timestamp.valueOf(LocalDateTime.now()))
+                .build();
+
+        log.info("Order created and status set as: {}", order.getOrderStatus());
+        log.info("Exiting OrderServiceImpl::setOrderStatus()");
+        return order;
+    }
+
+    private Set<Long> extractFoodId(OrderDto orderDto) {
+        log.info("Entering OrderServiceImpl::extractFoodId()");
+        return orderDto.getItems()
+                        .stream()
+                        .map(OrderItemDto::getFoodId)
+                        .collect(Collectors.toSet());
+    }
+
 }

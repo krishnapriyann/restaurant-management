@@ -1,7 +1,9 @@
 package io.poc.inventoryservice.repository;
 
 import io.poc.inventoryservice.entity.Food;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
@@ -14,10 +16,8 @@ public interface InventoryRepository extends JpaRepository<Food, Long> {
     @Query("SELECT f FROM Food f")
     List<Food> getAllFood();
 
-    Food getByFoodId(Long foodId);
-
-    List<Food> getFoodByIds(List<Long> foodId);
-
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT f FROM Food f WHERE f.foodId = :id")
-    Food lockProductById(Long id);
+    Food lockFoodById(Long id);
+
 }
