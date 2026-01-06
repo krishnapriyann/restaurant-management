@@ -28,53 +28,12 @@ public class PaymentServiceImpl implements PaymentService {
 
         this.paymentRepository = paymentRepository;
         this.notificationProxy = notificationProxy;
-
-        log.info("PaymentServiceImpl initialized");
+        log.info("Initializing PaymentServiceImpl");
     }
-
-//    @Override
-//    public PaymentDto makePayment(OrderDto order) {
-//
-//        log.info("Processing payment for OrderID={} | Amount={} | Email={}",
-//                order.getOrderId(), order.getOrderValue(), order.getEmail());
-//
-//        Payment payment = Payment.builder()
-//                .orderId(order.getOrderId())
-//                .amount(order.getOrderValue())
-//                .paymentType(PaymentType.UPI.name())
-//                .status("COMPLETE")
-//                .build();
-//
-//        log.info("Persisting Payment entity...");
-//        paymentRepository.save(payment);
-//        log.info("Payment persisted with ID={} for OrderID={}",
-//                payment.getPaymentId(), payment.getOrderId());
-//
-//        try {
-//            log.info("Triggering notification to {}",
-//                    order.getEmail());
-//
-//            notificationProxy.notifyUser(order.getEmail());
-//
-//            log.info("Notification triggered successfully");
-//
-//        } catch (Exception e) {
-//            log.error("Notification failed Email={}",
-//                    order.getEmail(), e);
-//        }
-//
-//        log.info("Payment COMPLETE Amount={}",
-//                payment.getAmount());
-//
-//        return PaymentDto.builder()
-//                .amount(payment.getAmount())
-//                .paymentType(payment.getPaymentType())
-//                .status("COMPLETE")
-//                .build();
-//    }
 
     @Override
     public Mono<PaymentDto> makePayment(OrderDto order) {
+        log.info("Entering PaymentServiceImpl::makePayment");
         log.info("Processing payment for OrderID={} | Amount={} | Email={}",
                 order.getOrderId(), order.getOrderValue(), order.getEmail());
 
@@ -94,12 +53,13 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("Triggering notification to {}",
                     order.getEmail());
 
-        notificationProxy.notifyUser(order.getEmail());
+        notificationProxy.notifyUser(order.getEmail(), payment.getStatus());
         log.info("Notification triggered successfully");
 
         log.info("Payment COMPLETE Amount={}",
                 payment.getAmount());
 
+        log.info("Exiting PaymentServiceImpl::makePayment");
         return Mono.just(PaymentDto.builder()
                 .amount(payment.getAmount())
                 .paymentType(payment.getPaymentType())

@@ -18,6 +18,10 @@ public class Food {
     private String name;
     private Long price;
     private String description;
+
+    @Version
+    private Long version;
+
     private int stock;
 }
 

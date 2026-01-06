@@ -3,6 +3,8 @@ package io.poc.paymentservice.controller;
 import io.poc.paymentservice.model.OrderDto;
 import io.poc.paymentservice.model.PaymentDto;
 import io.poc.paymentservice.service.PaymentService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -15,14 +17,22 @@ import reactor.core.publisher.Mono;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final Logger log = LoggerFactory.getLogger(PaymentController.class);
 
     public PaymentController(PaymentService paymentService) {
         this.paymentService = paymentService;
+        log.info("Initializing PaymentController");
     }
 
     @PostMapping(path = "payment")
-    public Mono<PaymentDto> makePayment(@RequestBody OrderDto order) {
+    public ResponseEntity<Mono<PaymentDto>> makePayment(@RequestBody OrderDto order) {
+        log.info("Entering PaymentController::makePayment");
+
+        log.info("Order details: {}", order);
+
         Mono<PaymentDto> paymentDto = paymentService.makePayment(order);
-        return ResponseEntity.ok(paymentDto).getBody();
+        log.info("Exiting PaymentController::makePayment");
+
+        return ResponseEntity.ok(paymentDto);
     }
 }

@@ -15,4 +15,9 @@ public interface InventoryRepository extends JpaRepository<Food, Long> {
     List<Food> getAllFood();
 
     Food getByFoodId(Long foodId);
+
+    List<Food> getFoodByIds(List<Long> foodId);
+
+    @Query("SELECT f FROM Food f WHERE f.foodId = :id")
+    Food lockProductById(Long id);
 }
