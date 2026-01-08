@@ -32,10 +32,14 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public Mono<PaymentDto> makePayment(OrderDto order) {
+    public Mono<PaymentDto> pay(OrderDto order) {
         log.info("Entering PaymentServiceImpl::makePayment");
         log.info("Processing payment for OrderID={} | Amount={} | Email={}",
                 order.getOrderId(), order.getOrderValue(), order.getEmail());
+
+        String orderStatus = order.getOrderStatus();
+
+//        Implement payment based on order status.
 
         Payment payment = Payment.builder()
                 .orderId(order.getOrderId())

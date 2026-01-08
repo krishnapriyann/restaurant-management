@@ -24,13 +24,13 @@ public class PaymentController {
         log.info("Initializing PaymentController");
     }
 
-    @PostMapping(path = "payment")
-    public ResponseEntity<Mono<PaymentDto>> makePayment(@RequestBody OrderDto order) {
+    @PostMapping(path = "pay")
+    public ResponseEntity<Mono<PaymentDto>> payment(@RequestBody OrderDto order) {
         log.info("Entering PaymentController::makePayment");
 
         log.info("Order details: {}", order);
 
-        Mono<PaymentDto> paymentDto = paymentService.makePayment(order);
+        Mono<PaymentDto> paymentDto = paymentService.pay(order);
         log.info("Exiting PaymentController::makePayment");
 
         return ResponseEntity.ok(paymentDto);

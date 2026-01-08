@@ -1,4 +1,4 @@
-package io.poc.inventoryservice.model;
+package io.poc.notificationservice.model;
 
 import lombok.*;
 
@@ -14,5 +14,4 @@ public class OrderItemDto {
     private Long foodId;
     private int quantity;
     private Long price;
-
 }

@@ -1,7 +1,9 @@
 package io.poc.inventoryservice.service;
 
 import io.poc.inventoryservice.model.FoodDto;
-import io.poc.inventoryservice.model.OrderItemDto;
+import io.poc.inventoryservice.model.OrderDto;
+import io.poc.inventoryservice.model.ReservationDto;
+import io.poc.inventoryservice.model.ReservationResult;
 
 import java.util.List;
 
@@ -9,10 +11,10 @@ public interface InventoryService {
 
     List<FoodDto> getMenu();
 
-    void reserve(List<OrderItemDto> orderItems);
+    ReservationResult reserve(OrderDto order);
 
-    void confirm(List<OrderItemDto> items);
+    void confirm(Long orderId);
 
-    void cancel(List<OrderItemDto> items);
+    void cancel(Long orderId);
 }
 

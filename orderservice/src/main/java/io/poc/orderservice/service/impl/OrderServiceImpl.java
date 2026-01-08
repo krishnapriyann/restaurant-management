@@ -128,7 +128,7 @@ public class OrderServiceImpl implements OrderService {
         log.info("Calling Payment Service for OrderID={}", order.getOrderId());
 
         Mono<PaymentDto> paymentDetail = webClient.post()
-                .uri(PAYMENT_SERVICE + "/payment")
+                .uri(PAYMENT_SERVICE + "/pay")
                 .bodyValue(order)
                 .retrieve()
                 .bodyToMono(PaymentDto.class)
@@ -217,18 +217,28 @@ public class OrderServiceImpl implements OrderService {
 
         log.info("Building order items and persisting order");
         List<OrderItem> orderItemsList = buildOrderItems(order);
+
         Order orderToPersist = setOrderStatus(order, "CREATED", orderItemsList);
+
         orderRepository.save(orderToPersist);
         log.info("Order saved successfully with status: {}", orderToPersist.getOrderStatus());
 
-        HttpEntity<List<OrderItemDto>> orderItems = new HttpEntity<>(buildOrderItemDtos(orderItemsList));
-        Boolean reserved = restTemplate.getForObject(
-                INVENTORY_SERVICE + "/reserve",
-                Boolean.class,
-                orderItems
-        );
+        try {
+            ReservationResult result = reservation(order);
 
+            if(result.getReservationStatus().equalsIgnoreCase("RESERVED")) {
+
+                Mono<PaymentDto> payment = pay(order);
+                return payment.flatMap(pay -> pay.getStatus().equalsIgnoreCase("COMPLETE"))
+            }
+
+        } catch (Exception e) {
+            log.error("Order processing failed", e);
+            throw e;
+        }
     }
+
+
 
     private List<OrderItem> buildOrderItems(OrderDto orderRequest) {
         log.info("Entering OrderServiceImpl::buildOrderItems()");
@@ -278,6 +288,30 @@ public class OrderServiceImpl implements OrderService {
                         .stream()
                         .map(OrderItemDto::getFoodId)
                         .collect(Collectors.toSet());
+    }
+
+    ReservationResult reservation(OrderDto orderDto) {
+        log.info("Entering OrderServiceImpl::reservation()");
+
+        HttpEntity<OrderDto> requestedOrder = new HttpEntity<>(orderDto);
+
+        return restTemplate.getForObject(
+                INVENTORY_SERVICE + "/reserve",
+                ReservationResult.class,
+                requestedOrder
+        );
+    }
+
+    private Mono<PaymentDto> pay(OrderDto order) {
+        return webClient.post()
+                .uri(PAYMENT_SERVICE + "/pay")
+                .bodyValue(order)
+                .exchangeToMono(
+                        response ->
+                                response.bodyToMono(PaymentDto.class)
+                )
+                .doOnSubscribe(subscription -> log.info("Payment call sent successfully"))
+                .doOnNext(response -> log.info("Payment response received: {}", response));
     }
 
 }
