@@ -18,7 +18,7 @@ public class OrderItem {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "order_id")   // FK COLUMN
+    @JoinColumn(name = "order_id")
     @JsonBackReference
     @ToString.Exclude
     private Order order;

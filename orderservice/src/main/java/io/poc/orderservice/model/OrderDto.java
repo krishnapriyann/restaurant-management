@@ -11,7 +11,8 @@ import java.util.List;
 @NoArgsConstructor
 @ToString
 public class OrderDto {
-//    private Long orderId;
+
+    private Long orderId;
     private List<OrderItemDto> items;
     private Long userId;
     private Long orderValue;

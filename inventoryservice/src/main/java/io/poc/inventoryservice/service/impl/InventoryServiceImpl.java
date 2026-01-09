@@ -11,6 +11,7 @@ import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -54,7 +55,7 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Transactional
     @Override
-    public ReservationResult reserve(OrderDto order) {
+    public Mono<ReservationResult> reserve(OrderDto order) {
         log.info("Entering InventoryController::reserve()");
 
         List<OrderItemDto> items = order.getItems();
@@ -104,17 +105,17 @@ public class InventoryServiceImpl implements InventoryService {
         }
 
         log.info("Exiting InventoryController::reserve()");
-        return ReservationResult.builder()
+        return Mono.just(ReservationResult.builder()
                 .orderId(order.getOrderId())
                 .reservationItems(reservedItems)
                 .reservationStatus("RESERVED")
-                .build();
+                .build());
 
     }
 
     @Override
     @Transactional
-    public void confirm(Long orderId) {
+    public Mono<Void> confirm(Long orderId) {
         log.info("Entering InventoryController::confirm()");
 
         List<Reservation> reservations = reservationRepository.getByOrderId(orderId);
@@ -132,11 +133,12 @@ public class InventoryServiceImpl implements InventoryService {
         }
 
         log.info("Exiting InventoryController::confirm()");
+        return Mono.empty();
     }
 
     @Override
     @Transactional
-    public void cancel(Long orderId) {
+    public Mono<Void> cancel(Long orderId) {
     log.info("Entering InventoryController::cancel()");
 
         List<Reservation> reservations = reservationRepository.getByOrderId(orderId);
@@ -153,6 +155,7 @@ public class InventoryServiceImpl implements InventoryService {
         }
 
         log.info("Exiting InventoryController::cancel()");
+        return Mono.empty();
     }
 
 }

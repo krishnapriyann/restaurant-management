@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -32,10 +33,10 @@ public class InventoryController {
     }
 
     @PostMapping("/reserve")
-    public ResponseEntity<ReservationResult> reserve(@RequestBody OrderDto order) {
+    public ResponseEntity<Mono<ReservationResult>> reserve(@RequestBody OrderDto order) {
         log.info("Entering InventoryController::reserve()");
 
-        ReservationResult reservation = inventoryService.reserve(order);
+        Mono<ReservationResult> reservation = inventoryService.reserve(order);
         log.info("Exiting InventoryController::reserve()");
 
         return ResponseEntity.ok(reservation);

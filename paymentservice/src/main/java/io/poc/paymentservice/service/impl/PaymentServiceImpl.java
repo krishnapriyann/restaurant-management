@@ -9,7 +9,9 @@ import io.poc.paymentservice.repository.PaymentRepository;
 import io.poc.paymentservice.service.PaymentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -21,13 +23,20 @@ public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final NotificationProxy notificationProxy;
+    private final WebClient webClient;
+
+    @Value("${service.inventory}")
+    private String INVENTORY_SERVICE;
+
 
     public PaymentServiceImpl(
             PaymentRepository paymentRepository,
-            NotificationProxy notificationProxy) {
+            NotificationProxy notificationProxy,
+            WebClient webClient) {
 
         this.paymentRepository = paymentRepository;
         this.notificationProxy = notificationProxy;
+        this.webClient = webClient;
         log.info("Initializing PaymentServiceImpl");
     }
 
@@ -39,36 +48,87 @@ public class PaymentServiceImpl implements PaymentService {
 
         String orderStatus = order.getOrderStatus();
 
-//        Implement payment based on order status.
+        if (orderStatus.equalsIgnoreCase("RESERVED")) {
 
-        Payment payment = Payment.builder()
+            Payment payment = Payment.builder()
+                    .orderId(order.getOrderId())
+                    .amount(order.getOrderValue())
+                    .paymentType(PaymentType.UPI.name())
+                    .status("COMPLETE")
+                    .build();
+
+            log.info("Persisting Payment entity...");
+            Payment persistedPayment = paymentRepository.save(payment);
+
+            if (persistedPayment.getStatus().equalsIgnoreCase("COMPLETE")) {
+
+                log.info("Payment persisted with ID={} for OrderID={}",
+                        persistedPayment.getPaymentId(), persistedPayment.getOrderId());
+
+                log.info("Triggering notification to {}",
+                        order.getEmail());
+
+                order.setOrderStatus("ORDER_PLACED");
+                notificationProxy.notifyUser(order);
+
+                log.info("Exiting PaymentServiceImpl::makePayment");
+
+                return confirm(persistedPayment.getOrderId())
+                        .thenReturn(PaymentDto.builder()
+                                .amount(persistedPayment.getAmount())
+                                .paymentType(persistedPayment.getPaymentType())
+                                .status("PAYMENT_COMPLETE")
+                                .build())
+                        .delayElement(Duration.ofSeconds(10))
+                        .doOnSuccess(o -> {
+
+                            log.info("Payment COMPLETE Amount={}",
+                                    persistedPayment.getAmount());
+
+                            persistedPayment.setStatus("PAYMENT_COMPLETE");
+                            paymentRepository.save(persistedPayment);
+
+                        });
+            }
+
+            return cancel(order.getOrderId())
+                    .thenReturn(PaymentDto.builder()
+                            .amount(order.getOrderValue())
+                            .status("CANCELLED")
+                            .build())
+                    .delayElement(Duration.ofSeconds(10))
+                    .doOnSuccess(o -> {
+                        log.info("Payment CANCELLED Amount={}", persistedPayment);
+
+                        persistedPayment.setStatus("PAYMENT_CANCELLED");
+                        paymentRepository.save(persistedPayment);
+                    });
+        }
+
+        return Mono.just(PaymentDto.builder()
                 .orderId(order.getOrderId())
                 .amount(order.getOrderValue())
-                .paymentType(PaymentType.UPI.name())
-                .status("COMPLETE")
-                .build();
+                .status("ORDER_CREATION_FAILED")
+                .build());
+    }
 
-        log.info("Persisting Payment entity...");
-        paymentRepository.save(payment);
+    private Mono<Void> confirm(Long orderId) {
+        return webClient.post()
+                .uri(INVENTORY_SERVICE + "/reserve/confirm")
+                .bodyValue(orderId)
+                .exchangeToMono(
+                        response -> response.bodyToMono(Void.class)
+                )
+                .doOnSubscribe(subscription -> log.info("Confirmation call sent successfully"));
+    }
 
-        log.info("Payment persisted with ID={} for OrderID={}",
-                payment.getPaymentId(), payment.getOrderId());
-
-        log.info("Triggering notification to {}",
-                    order.getEmail());
-
-        notificationProxy.notifyUser(order.getEmail(), payment.getStatus());
-        log.info("Notification triggered successfully");
-
-        log.info("Payment COMPLETE Amount={}",
-                payment.getAmount());
-
-        log.info("Exiting PaymentServiceImpl::makePayment");
-        return Mono.just(PaymentDto.builder()
-                .amount(payment.getAmount())
-                .paymentType(payment.getPaymentType())
-                .status("COMPLETE")
-                .build())
-                .delayElement(Duration.ofSeconds(10));
+    private Mono<Void> cancel(Long orderId) {
+        return webClient.post()
+                .uri(INVENTORY_SERVICE + "/reserve/cancel")
+                .bodyValue(orderId)
+                .exchangeToMono(
+                        response -> response.bodyToMono(Void.class)
+                )
+                .doOnSubscribe(subscription -> log.info("Cancellation call sent successfully"));
     }
 }
