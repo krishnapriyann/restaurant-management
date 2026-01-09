@@ -10,15 +10,13 @@ import lombok.*;
 @NoArgsConstructor
 @Entity
 @ToString
-@Table(name = "food")
-public class Food {
+@Table(name = "reservation")
+public class Reservation {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long reservationId;
+    private Long orderId;
     private Long foodId;
-    private String name;
-    private Long price;
-    private String description;
-    private int stock;
-    private int reservedStock;
+    private int reservationCount;
+    private String status;
 }
-

@@ -8,11 +8,11 @@ import lombok.*;
 @AllArgsConstructor
 @NoArgsConstructor
 @ToString
-public class OrderItemDto {
-//    private Long id;
-//    private Long orderId;
+public class ReservationDto {
+    private Long reservationId;
+    private Long orderId;
     private Long foodId;
-    private int quantity;
-    private Long price;
+    private int reservationCount;
+    private String status;
 
 }
