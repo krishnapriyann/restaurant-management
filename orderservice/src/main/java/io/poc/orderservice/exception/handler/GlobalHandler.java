@@ -1,9 +1,6 @@
 package io.poc.orderservice.exception.handler;
 
-import io.poc.orderservice.exception.InventoryServiceException;
-import io.poc.orderservice.exception.OrderProcessingException;
-import io.poc.orderservice.exception.PaymentServiceException;
-import io.poc.orderservice.exception.InvalidOrderException;
+import io.poc.orderservice.exception.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -47,6 +44,31 @@ public class GlobalHandler {
                 .status(500)
                 .body("Order processing failed");
     }
+
+    @ExceptionHandler(OrderTimeoutException.class)
+    public ResponseEntity<String> handleOrderTimeoutFailure(OrderTimeoutException ex) {
+        log.error("Order timeout failure", ex);
+        return ResponseEntity
+                .status(500)
+                .body("Order timeout failure");
+    }
+
+    @ExceptionHandler(PaymentFailedException.class)
+    public ResponseEntity<String> handlePaymentFailed(PaymentFailedException ex) {
+        log.error("Payment failed", ex);
+        return ResponseEntity
+                .status(500)
+                .body("Payment failed");
+    }
+
+    @ExceptionHandler(ReservationFailedException.class)
+    public ResponseEntity<String> handleReservationFailed(ReservationFailedException ex) {
+        log.error("Reservation failed", ex);
+        return ResponseEntity
+                .status(500)
+                .body("Reservation failed");
+    }
+
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<String> handleGeneric(Exception ex) {

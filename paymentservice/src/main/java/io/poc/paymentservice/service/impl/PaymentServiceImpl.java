@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 
@@ -85,20 +86,26 @@ public class PaymentServiceImpl implements PaymentService {
         paymentRepository.save(payment);
 
         order.setOrderStatus(OrderStatus.ORDER_PLACED);
-        notificationProxy.notifyUser(order);
 
-        return Mono.just(PaymentDto.builder()
+//        Since we are running a blocking call we need to use a blocking thread pool
+//        not event loop
+//        and fromRunnable is used because -> when subscribed run this action,
+//        but do not emit a value.
+
+        return Mono.fromRunnable(() -> notificationProxy.notifyUser(order))
+                .subscribeOn(Schedulers.boundedElastic())
+                .then(Mono.just(PaymentDto.builder()
                         .orderId(payment.getOrderId())
                         .amount(payment.getAmount())
                         .paymentType(payment.getPaymentType())
                         .status(PaymentStatus.PAYMENT_COMPLETE)
                         .build())
-                .delayElement(Duration.ofSeconds(10));
+                .delayElement(Duration.ofSeconds(1)));
     }
 
     private Mono<PaymentDto> handlePaymentFailure(Throwable ex, Payment payment, OrderDto order) {
 
-        log.error("Payment failed for orderId={}", order.getOrderId(), ex);
+        log.error("Confirmation failed for orderId={}", order.getOrderId(), ex);
 
         payment.setStatus(PaymentStatus.PAYMENT_CANCELLED);
         paymentRepository.save(payment);
@@ -116,7 +123,7 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("Sending inventory confirmation for orderId={}", orderId);
 
         return webClient.post()
-                .uri(INVENTORY_SERVICE + "/reserve/confirm")
+                .uri(INVENTORY_SERVICE + "/reserve/confirm?orderId={orderId}", orderId)
                 .bodyValue(orderId)
                 .retrieve()
                 .bodyToMono(Void.class)
@@ -129,7 +136,7 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("Sending inventory cancellation for orderId={}", orderId);
 
         return webClient.post()
-                .uri(INVENTORY_SERVICE + "/reserve/cancel")
+                .uri(INVENTORY_SERVICE + "/reserve/cancel?orderId={orderId}", orderId)
                 .bodyValue(orderId)
                 .retrieve()
                 .bodyToMono(Void.class)

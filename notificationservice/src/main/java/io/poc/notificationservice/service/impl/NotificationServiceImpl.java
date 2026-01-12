@@ -19,12 +19,12 @@ public class NotificationServiceImpl implements NotificationService {
         log.info("email: {}, status: {}", email, status);
 
         if(status.equalsIgnoreCase("ORDER_PLACED")) {
-            log.info("Order Placed...");
+            log.info("Notified: Order Placed...");
             System.out.println("Payment for " + email + " done Successfully");
             return true;
 
         } else if(status.equalsIgnoreCase("ORDER_CANCELLED")) {
-            log.info("Order Cancelled...");
+            log.info("Notified: Order Cancelled...");
             System.out.println("Payment for " + email + " cancelled successfully");
             return true;
         }
