@@ -21,7 +21,6 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.sql.Timestamp;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -209,7 +208,7 @@ public class OrderServiceImpl implements OrderService {
                 .bodyValue(orderDto)
                 .retrieve()
                 .bodyToMono(ReservationResult.class)
-                .timeout(Duration.ofSeconds(10))
+//                .timeout(Duration.ofSeconds(10))
                 .onErrorMap(ex -> {
                     log.error("Inventory service call failed for orderId={}", orderDto.getOrderId(), ex);
                     return new InventoryServiceException("Inventory service unavailable");
@@ -224,11 +223,18 @@ public class OrderServiceImpl implements OrderService {
                 .bodyValue(order)
                 .retrieve()
                 .bodyToMono(PaymentDto.class)
-                .timeout(Duration.ofSeconds(10))
+//                .timeout(Duration.ofSeconds(10))
                 .onErrorMap(ex -> {
                     log.error("Payment service call failed for orderId={}", order.getOrderId(), ex);
                     return new PaymentServiceException("Payment service unavailable");
                 });
+    }
+
+//    Feature : To calculate total order value in the backend.
+    @Override
+    public Long calculateOrderValue(Long orderId) {
+        log.info("OrderServiceImpl::calculateOrderValue called for orderId={}", orderId);
+        return 0L;
     }
 
 }
