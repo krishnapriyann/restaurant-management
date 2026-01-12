@@ -1,42 +1,43 @@
 package io.poc.orderservice.service.impl;
 
+import io.poc.orderservice.constants.OrderStatus;
 import io.poc.orderservice.entity.Order;
 import io.poc.orderservice.entity.OrderItem;
+import io.poc.orderservice.exception.InventoryServiceException;
+import io.poc.orderservice.exception.OrderProcessingException;
+import io.poc.orderservice.exception.PaymentServiceException;
 import io.poc.orderservice.model.*;
 import io.poc.orderservice.repository.OrderItemRepository;
 import io.poc.orderservice.repository.OrderRepository;
 import io.poc.orderservice.service.OrderService;
-import org.apache.coyote.BadRequestException;
-import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 @Service
 public class OrderServiceImpl implements OrderService {
 
-    private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
+    @Value("${service.inventory}")
+    private String INVENTORY_SERVICE;
 
-    private final String INVENTORY_SERVICE = "http://localhost:0001/api/v1/inventory-service";
-    private final String PAYMENT_SERVICE = "http://localhost:0003/api/v1/payment-service";
+    @Value("${service.payment}")
+    private String PAYMENT_SERVICE;
 
+    private static final org.slf4j.Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
     private final RestTemplate restTemplate;
     private final WebClient webClient;
     private final OrderRepository orderRepository;
-    private final OrderItemRepository orderItemRepository;
 
     public OrderServiceImpl(
             RestTemplate restTemplate,
@@ -47,14 +48,12 @@ public class OrderServiceImpl implements OrderService {
         this.restTemplate = restTemplate;
         this.webClient = webClient;
         this.orderRepository = orderRepository;
-        this.orderItemRepository = orderItemRepository;
-        log.info("OrderServiceImpl initialized");
     }
+
 
     @Override
     public List<FoodDto> menu() {
-        log.info("OrderServiceImpl::menu");
-        log.info("Fetching menu from Inventory Service");
+        log.info("Fetching menu from Inventory service");
 
         List<FoodDto> menu = restTemplate.exchange(
                 INVENTORY_SERVICE + "/menu",
@@ -63,176 +62,114 @@ public class OrderServiceImpl implements OrderService {
                 new ParameterizedTypeReference<List<FoodDto>>() {}
         ).getBody();
 
-        log.info("Menu received. Count={}", menu != null ? menu.size() : 0);
+        if (menu == null) {
+            log.error("Inventory service returned null menu");
+            throw new InventoryServiceException("Menu response from inventory service is null");
+        }
 
+        log.info("Menu fetched successfully. Items count={}", menu.size());
         return menu;
     }
 
+
     @Override
-    public Mono<OrderDto> placeOrder(OrderDto orderRequest) {
+    public Mono<OrderDto> placeOrder(OrderDto order) {
 
-        log.info("Entering OrderServiceImpl::placeOrder");
-        log.info("Received order placement request: {}", orderRequest);
+        log.info("Starting order placement for userId={}", order.getUserId());
 
-        // Build OrderItems
-        List<OrderItem> orderItems = orderRequest.getItems()
-                .stream()
-                .map(item -> OrderItem.builder()
-                        .foodId(item.getFoodId())
-                        .quantity(item.getQuantity())
-                        .price(item.getPrice())
-                        .build())
-                .toList();
+        List<OrderItem> orderItems = buildOrderItems(order);
 
-        log.info("Mapped {} OrderItems", orderItems.size());
+        Order createdOrder = persistOrder(order, OrderStatus.CREATED, orderItems);
+        log.info("Order created with status={}, orderId={}",
+                OrderStatus.CREATED, createdOrder.getOrderId());
 
-        List<Long> foodsIds = orderItems.stream()
-                .map(OrderItem::getFoodId)
-                .toList();
+        order.setOrderId(createdOrder.getOrderId());
+        order.setOrderStatus(OrderStatus.CREATED);
 
-        getStock(foodsIds).stream().map(foodDto -> {
-            int stock = foodDto.getStock();
-            if(stock < 0){
-                throw new IllegalArgumentException("Insufficient stock for product: " + foodDto.getName());
-            }
-            return null;
-        });
-
-        // Build Order
-        Order order = Order.builder()
-                .items(orderItems)
-                .userId(orderRequest.getUserId())
-                .orderValue(orderRequest.getOrderValue())
-                .orderStatus("CREATED")
-                .email(orderRequest.getEmail())
-                .createdAt(Timestamp.valueOf(LocalDateTime.now()))
-                .build();
-
-        log.info("Order created and status set as: {}", order.getOrderStatus());
-
-        // Set back-reference
-        orderItems.forEach(item -> item.setOrder(order));
-
-        log.info("Persisting Order...");
-        orderRepository.save(order);
-        log.info("Order persisted with ID: {}", order.getOrderId());
-
-        List<OrderItemDto> requestItems = orderRequest.getItems();
-        log.info("Food order requested: {}", requestItems);
-
-        if (!"CREATED".equalsIgnoreCase(order.getOrderStatus())) {
-            log.warn("Order not in CREATED state. Returning early.");
-            return Mono.just(map(order, requestItems));
-        }
-
-        log.info("Calling Payment Service for OrderID={}", order.getOrderId());
-
-        Mono<PaymentDto> paymentDetail = webClient.post()
-                .uri(PAYMENT_SERVICE + "/payment")
-                .bodyValue(order)
-                .retrieve()
-                .bodyToMono(PaymentDto.class)
-                .doOnSubscribe(subscription -> log.info("Payment call sent successfully"))
-                .doOnNext(response -> log.info("Payment response received: {}", response));
-
-        return paymentDetail.flatMap(payment -> {
-
-            log.info("Payment response received for OrderID={}: {}", order.getOrderId(), payment);
-            log.info("Evaluating payment status: {}", payment.getStatus());
-
-            if (!"COMPLETE".equalsIgnoreCase(payment.getStatus())) {
-
-                log.error("Payment FAILED for OrderID={}", order.getOrderId());
-
-                order.setOrderStatus("FAILED");
-                order.setUpdatedAt(Timestamp.valueOf(LocalDateTime.now()));
-                orderRepository.save(order);
-
-                return Mono.just(map(order, requestItems));
-            }
-
-            log.info("Payment SUCCESS. Calling Inventory Service to reduce stock...");
-
-            Mono<Boolean> stockStatus = webClient.put()
-                    .uri(INVENTORY_SERVICE + "/reduce-stock")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(requestItems)
-                    .retrieve()
-                    .bodyToMono(Boolean.class)
-                    .doOnSubscribe(subscription -> log.info("inventory stock reduction call sent successfully"))
-                    .doOnNext(response -> log.info("Inventory response received: {}", response));
-
-            return stockStatus.flatMap(status -> {
-
-                log.info("Inventory update result for OrderID={}: {}", order.getOrderId(), status);
-
-                if (status) {
-                    order.setOrderStatus("COMPLETED");
-                } else {
-                    order.setOrderStatus("INVENTORY FAIL");
-                }
-                log.info("Order status after inventory update: {}", order.getOrderStatus());
-
-                order.setUpdatedAt(Timestamp.valueOf(LocalDateTime.now()));
-
-                orderRepository.save(order);
-
-                log.info("Order {} final status: {}", order.getOrderId(), order.getOrderStatus());
-                log.info("Exiting OrderServiceImpl::placeOrder");
-                return Mono.just(map(order, requestItems));
-            });
-
-        }).doOnError(e -> log.error("Order processing failed", e));
+        return reservation(order)
+                .flatMap(reservationResult -> handleReservationResult(reservationResult, createdOrder, order))
+                .onErrorMap(ex -> {
+                    log.error("Order processing failed for orderId={}", order.getOrderId(), ex);
+                    return new OrderProcessingException("Order processing failed", ex);
+                });
     }
 
-    private List<FoodDto> getStock(List<Long> foodIds){
-        HttpEntity<List<Long>> ids =  new HttpEntity<>(foodIds);
 
-        if(!foodIds.isEmpty()) {
-            return restTemplate.exchange(
-                    INVENTORY_SERVICE + "/stock",
-                    HttpMethod.GET,
-                    ids,
-                    new ParameterizedTypeReference<List<FoodDto>>() {
+    private Mono<OrderDto> handleReservationResult(
+            ReservationResult result,
+            Order savedOrder,
+            OrderDto orderDto) {
+
+        if (result == null) {
+            log.error("Reservation response is null for orderId={}", savedOrder.getOrderId());
+            return Mono.error(new InventoryServiceException("Inventory service returned null"));
+        }
+
+        log.info("Reservation result received for orderId={}, status={}",
+                savedOrder.getOrderId(), result.getReservationStatus());
+
+        if (OrderStatus.RESERVED.equalsIgnoreCase(result.getReservationStatus())) {
+            log.info("Inventory reserved successfully for orderId={}", savedOrder.getOrderId());
+            return processPayment(savedOrder, orderDto);
+        }
+
+        log.warn("Reservation failed for orderId={}", savedOrder.getOrderId());
+        savedOrder.setOrderStatus(OrderStatus.FAILED);
+        Order failed = orderRepository.save(savedOrder);
+
+        return Mono.just(buildOrderDto(failed));
+    }
+
+    private Mono<OrderDto> processPayment(Order reservedOrder, OrderDto orderDto) {
+
+        reservedOrder.setOrderStatus(OrderStatus.RESERVED);
+        Order savedReservedOrder = orderRepository.save(reservedOrder);
+        orderDto.setOrderStatus(OrderStatus.RESERVED);
+
+        log.info("Initiating payment for orderId={}", savedReservedOrder.getOrderId());
+
+        return pay(orderDto)
+                .flatMap(payment -> {
+
+                    if (payment == null) {
+                        log.error("Payment response is null for orderId={}", savedReservedOrder.getOrderId());
+                        return Mono.error(new PaymentServiceException("Payment service returned null"));
                     }
-            ).getBody();
-        } else {
-            return Collections.emptyList();
-        }
+
+                    if (!"PAYMENT_CANCELLED".equalsIgnoreCase(payment.getStatus())) {
+                        log.info("Payment successful for orderId={}", savedReservedOrder.getOrderId());
+                        savedReservedOrder.setOrderStatus(OrderStatus.COMPLETED);
+                    } else {
+                        log.warn("Payment cancelled for orderId={}", savedReservedOrder.getOrderId());
+                        savedReservedOrder.setOrderStatus(OrderStatus.CANCELLED);
+                    }
+
+                    Order finalOrder = orderRepository.save(savedReservedOrder);
+                    log.info("Final order state persisted. orderId={}, status={}",
+                            finalOrder.getOrderId(), finalOrder.getOrderStatus());
+
+                    return Mono.just(buildOrderDto(finalOrder));
+                });
     }
 
-    private OrderDto map(Order order, List<OrderItemDto> items) {
+
+    private Order persistOrder(OrderDto orderDto, String status, List<OrderItem> items) {
+        Order order = setOrderStatus(orderDto, status, items);
+        return orderRepository.save(order);
+    }
+
+    private OrderDto buildOrderDto(Order order) {
         return OrderDto.builder()
-                .items(items)
-                .userId(order.getUserId())
+                .orderId(order.getOrderId())
+                .items(buildOrderItemDtos(order.getItems()))
                 .orderValue(order.getOrderValue())
                 .orderStatus(order.getOrderStatus())
+                .userId(order.getUserId())
                 .email(order.getEmail())
                 .build();
     }
 
-    public Mono<OrderDto> bookOrder(OrderDto order) {
-        log.info("OrderServiceImpl::bookOrder()");
-        log.info("Booking order request for order: {}", order);
-
-        log.info("Building order items and persisting order");
-        List<OrderItem> orderItemsList = buildOrderItems(order);
-        Order orderToPersist = setOrderStatus(order, "CREATED", orderItemsList);
-        orderRepository.save(orderToPersist);
-        log.info("Order saved successfully with status: {}", orderToPersist.getOrderStatus());
-
-        HttpEntity<List<OrderItemDto>> orderItems = new HttpEntity<>(buildOrderItemDtos(orderItemsList));
-        Boolean reserved = restTemplate.getForObject(
-                INVENTORY_SERVICE + "/reserve",
-                Boolean.class,
-                orderItems
-        );
-
-    }
-
     private List<OrderItem> buildOrderItems(OrderDto orderRequest) {
-        log.info("Entering OrderServiceImpl::buildOrderItems()");
-
         return orderRequest.getItems()
                 .stream()
                 .map(item -> OrderItem.builder()
@@ -240,25 +177,21 @@ public class OrderServiceImpl implements OrderService {
                         .quantity(item.getQuantity())
                         .price(item.getPrice())
                         .build())
-                .peek(orderItem -> log.info("Order Items build successfully"))
                 .toList();
     }
 
     private List<OrderItemDto> buildOrderItemDtos(List<OrderItem> orderItems) {
         return orderItems.stream()
                 .map(item -> OrderItemDto.builder()
-                .foodId(item.getFoodId())
-                .quantity(item.getQuantity())
-                .price(item.getPrice())
+                        .foodId(item.getFoodId())
+                        .quantity(item.getQuantity())
+                        .price(item.getPrice())
                         .build())
-                .peek(orderItem -> log.info("Order Items build successfully"))
                 .toList();
     }
 
     private Order setOrderStatus(OrderDto orderDto, String status, List<OrderItem> items) {
-        log.info("Entering OrderServiceImpl::setOrderStatus()");
-
-        Order order = Order.builder()
+        return Order.builder()
                 .items(items)
                 .userId(orderDto.getUserId())
                 .orderValue(orderDto.getOrderValue())
@@ -266,18 +199,36 @@ public class OrderServiceImpl implements OrderService {
                 .email(orderDto.getEmail())
                 .createdAt(Timestamp.valueOf(LocalDateTime.now()))
                 .build();
-
-        log.info("Order created and status set as: {}", order.getOrderStatus());
-        log.info("Exiting OrderServiceImpl::setOrderStatus()");
-        return order;
     }
 
-    private Set<Long> extractFoodId(OrderDto orderDto) {
-        log.info("Entering OrderServiceImpl::extractFoodId()");
-        return orderDto.getItems()
-                        .stream()
-                        .map(OrderItemDto::getFoodId)
-                        .collect(Collectors.toSet());
+    Mono<ReservationResult> reservation(OrderDto orderDto) {
+        log.info("Calling Inventory service for reservation. orderId={}", orderDto.getOrderId());
+
+        return webClient.post()
+                .uri(INVENTORY_SERVICE + "/reserve")
+                .bodyValue(orderDto)
+                .retrieve()
+                .bodyToMono(ReservationResult.class)
+                .timeout(Duration.ofSeconds(10))
+                .onErrorMap(ex -> {
+                    log.error("Inventory service call failed for orderId={}", orderDto.getOrderId(), ex);
+                    return new InventoryServiceException("Inventory service unavailable");
+                });
+    }
+
+    private Mono<PaymentDto> pay(OrderDto order) {
+        log.info("Calling Payment service. orderId={}", order.getOrderId());
+
+        return webClient.post()
+                .uri(PAYMENT_SERVICE + "/pay")
+                .bodyValue(order)
+                .retrieve()
+                .bodyToMono(PaymentDto.class)
+                .timeout(Duration.ofSeconds(10))
+                .onErrorMap(ex -> {
+                    log.error("Payment service call failed for orderId={}", order.getOrderId(), ex);
+                    return new PaymentServiceException("Payment service unavailable");
+                });
     }
 
 }

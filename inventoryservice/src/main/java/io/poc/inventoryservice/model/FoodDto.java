@@ -14,6 +14,7 @@ public class FoodDto {
     private Long price;
     private String description;
     private int stock;
+    private int reservedCount;
 
 }
 

@@ -1,12 +1,12 @@
 package io.poc.inventoryservice.controller;
 
-import io.poc.inventoryservice.model.FoodDto;
-import io.poc.inventoryservice.model.OrderItemDto;
+import io.poc.inventoryservice.model.*;
 import io.poc.inventoryservice.service.InventoryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -14,31 +14,59 @@ import java.util.List;
 @RequestMapping("/api/v1/inventory-service")
 public class InventoryController {
 
+    private static final Logger log =
+            LoggerFactory.getLogger(InventoryController.class);
+
     private final InventoryService inventoryService;
-    private final Logger log = LoggerFactory.getLogger(InventoryController.class);
 
     public InventoryController(InventoryService inventoryService) {
         this.inventoryService = inventoryService;
-        log.info("Initializing InventoryController");
+        log.info("InventoryController initialized");
     }
 
     @GetMapping("/menu")
     public ResponseEntity<List<FoodDto>> getMenu() {
+        log.info("Fetching inventory menu");
 
-        log.info("Entering InventoryController::getMenu()");
         List<FoodDto> foodList = inventoryService.getMenu();
 
-        log.info("Exiting InventoryController::getMenu()");
-        return ResponseEntity.ok().body(foodList);
+        if (foodList == null || foodList.isEmpty()) {
+            log.warn("Menu is empty");
+            return ResponseEntity.noContent().build();
+        }
+
+        log.info("Menu fetched successfully. Items count={}", foodList.size());
+        return ResponseEntity.ok(foodList);
     }
 
     @PostMapping("/reserve")
-    public ResponseEntity<Void> reserve(@RequestBody List<OrderItemDto> orderItems) {
-        log.info("Entering InventoryController::reserve()");
+    public Mono<ReservationResult> reserve(@RequestBody OrderDto order) {
+        log.info("Reservation request received for orderId={}", order.getOrderId());
+        return inventoryService.reserve(order)
+                .doOnSuccess(r ->
+                        log.info("Reservation completed for orderId={}, status={}",
+                                order.getOrderId(), r.getReservationStatus()))
+                .doOnError(e ->
+                        log.error("Reservation failed for orderId={}", order.getOrderId(), e));
+    }
 
-        inventoryService.reserve(orderItems);
-        log.info("Exiting InventoryController::reserve()");
+    @PostMapping("/reserve/confirm")
+    public ResponseEntity<Void> reserveConfirm(@RequestParam Long orderId) {
+        log.info("Confirming reservation for orderId={}", orderId);
 
+        inventoryService.confirm(orderId);
+
+        log.info("Reservation confirmed for orderId={}", orderId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/reserve/cancel")
+    public ResponseEntity<Void> reserveCancel(@RequestParam Long orderId) {
+        log.info("Cancelling reservation for orderId={}", orderId);
+
+        inventoryService.cancel(orderId);
+
+        log.info("Reservation cancelled for orderId={}", orderId);
         return ResponseEntity.ok().build();
     }
 }

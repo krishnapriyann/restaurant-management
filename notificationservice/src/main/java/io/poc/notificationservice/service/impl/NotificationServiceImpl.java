@@ -1,5 +1,6 @@
 package io.poc.notificationservice.service.impl;
 
+import io.poc.notificationservice.model.OrderDto;
 import io.poc.notificationservice.service.NotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,19 +11,25 @@ public class NotificationServiceImpl implements NotificationService {
 
     private final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
-    @Override
-    public Boolean notifyUser(String email, String  paymentStatus) {
-        log.info("Entering NotificationServiceImpl::notifyUser");
+    public Boolean notify(OrderDto order) {
+        log.info("Entering NotificationServiceImpl::notify()");
 
-        if(paymentStatus.equalsIgnoreCase("COMPLETE")) {
+        String email = order.getEmail();
+        String status = order.getOrderStatus();
+        log.info("email: {}, status: {}", email, status);
+
+        if(status.equalsIgnoreCase("ORDER_PLACED")) {
+            log.info("Order Placed...");
             System.out.println("Payment for " + email + " done Successfully");
+            return true;
+
+        } else if(status.equalsIgnoreCase("ORDER_CANCELLED")) {
+            log.info("Order Cancelled...");
+            System.out.println("Payment for " + email + " cancelled successfully");
             return true;
         }
 
-        System.out.println("Payment for " + email + " Failed");
-        log.info("Payment for {} Failed", email);
-        log.info("Exiting NotificationServiceImpl::notifyUser");
-
+        log.info("Exiting NotificationServiceImpl::notify()");
         return false;
     }
 }

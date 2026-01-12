@@ -6,5 +6,5 @@ import reactor.core.publisher.Mono;
 
 public interface PaymentService {
 
-    Mono<PaymentDto> makePayment(OrderDto order);
+    Mono<PaymentDto> pay(OrderDto order);
 }
