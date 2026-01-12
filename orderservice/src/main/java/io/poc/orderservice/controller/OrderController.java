@@ -1,8 +1,10 @@
 package io.poc.orderservice.controller;
 
+import io.poc.orderservice.exception.InvalidOrderException;
 import io.poc.orderservice.model.FoodDto;
 import io.poc.orderservice.model.OrderDto;
 import io.poc.orderservice.service.OrderService;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -18,32 +20,37 @@ public class OrderController {
     private final OrderService orderService;
     private final Logger log = LoggerFactory.getLogger(OrderController.class);
 
-    private OrderController(OrderService orderService) {
+    public OrderController(OrderService orderService) {
         this.orderService = orderService;
-        log.info("Initializing OrderController");
+        log.info("OrderController initialized");
     }
 
-    @GetMapping(path = "/menu")
-    public ResponseEntity<List<FoodDto>> getMenu(){
-        log.info("Entering OrderController::getMenu");
+    @GetMapping("/menu")
+    public ResponseEntity<List<FoodDto>> getMenu() {
+        log.info("Fetching menu");
 
         List<FoodDto> menu = orderService.menu();
-        log.info("Menu fetched successfully");
 
-        log.info("Exiting OrderController::getMenu");
-        return ResponseEntity.ok().body(menu);
+        if (menu == null || menu.isEmpty()) {
+            log.warn("Menu is empty");
+            return ResponseEntity.noContent().build();
+        }
+
+        return ResponseEntity.ok(menu);
     }
 
-    @PostMapping(path = "/order-confirmation")
-    public ResponseEntity<Mono<OrderDto>> placeOrder(
-            @RequestBody OrderDto orderRequest
-    ){
-        log.info("Entering OrderController::placeOrder");
-        log.info("Placing order request for order: {}", orderRequest);
+    @PostMapping("/order-confirmation")
+    public Mono<ResponseEntity<OrderDto>> placeOrder(
+            @Valid @RequestBody OrderDto orderRequest) {
+        log.info("Placing order request");
 
-        Mono<OrderDto> order = orderService.placeOrder(orderRequest);
+        if (orderRequest == null) {
+            return Mono.error(new InvalidOrderException("Order request cannot be null"));
+        }
 
-        log.info("Exiting OrderController::placeOrder");
-        return ResponseEntity.ok(order);
+        return orderService.placeOrder(orderRequest)
+                .map(ResponseEntity::ok)
+                .doOnSuccess(r -> log.info("Order placed successfully"))
+                .doOnError(e -> log.error("Order placement failed", e));
     }
 }

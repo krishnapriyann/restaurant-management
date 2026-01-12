@@ -1,8 +1,11 @@
 package io.poc.inventoryservice.service.impl;
 
+import io.poc.inventoryservice.constants.ReservationStatus;
 import io.poc.inventoryservice.entity.Food;
 import io.poc.inventoryservice.entity.Reservation;
+import io.poc.inventoryservice.exception.InventoryProcessingException;
 import io.poc.inventoryservice.exception.OutOfStockException;
+import io.poc.inventoryservice.exception.ReservationNotFoundException;
 import io.poc.inventoryservice.model.*;
 import io.poc.inventoryservice.repository.InventoryRepository;
 import io.poc.inventoryservice.repository.ReservationRepository;
@@ -17,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Service
 public class InventoryServiceImpl implements InventoryService {
@@ -38,125 +40,150 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     public List<FoodDto> getMenu() {
-        log.info("Entering InventoryController::getMenu()");
-        return inventoryRepository.getAllFood()
-                .stream()
+        List<Food> foods = inventoryRepository.getAllFood();
+
+        log.info("Menu requested. Items count={}", foods.size());
+
+        return foods.stream()
                 .map(food -> FoodDto.builder()
                         .id(food.getFoodId())
                         .name(food.getName())
                         .price(food.getPrice())
                         .description(food.getDescription())
                         .stock(food.getStock())
-                        .build()
-                )
-                .peek(food -> log.info(food.toString()))
-                .collect(Collectors.toList());
+                        .build())
+                .toList();
     }
 
     @Transactional
     @Override
     public Mono<ReservationResult> reserve(OrderDto order) {
-        log.info("Entering InventoryController::reserve()");
 
-        List<OrderItemDto> items = order.getItems();
-        items.sort(Comparator.comparing(OrderItemDto::getFoodId));
+        log.info("Starting reservation for orderId={}", order.getOrderId());
 
-        List<ReservationItem> reservedItems = new ArrayList<>();
+        try {
+            List<OrderItemDto> items = order.getItems();
+            items.sort(Comparator.comparing(OrderItemDto::getFoodId));
 
-        for (OrderItemDto item : items) {
+            List<ReservationItem> reservedItems = new ArrayList<>();
 
-            log.info("Setting reservation for food: {}", item.getFoodId());
-            Food food = inventoryRepository.lockFoodById(item.getFoodId());
+            for (OrderItemDto item : items) {
 
-            Optional<Reservation> existing =
-                    reservationRepository.findByOrderIdAndFoodId(order.getOrderId(), food.getFoodId());
+                Food food = inventoryRepository.lockFoodById(item.getFoodId());
 
-            if(existing.isPresent()) {
-                reservedItems.add(
-                        ReservationItem.builder()
-                                .foodId(food.getFoodId())
-                                .quantity(item.getQuantity())
-                                .build()
-                );
+                Optional<Reservation> existing =
+                        reservationRepository.findByOrderIdAndFoodId(order.getOrderId(), food.getFoodId());
+
+                if (existing.isPresent()) {
+                    reservedItems.add(buildReservationItem(food, item));
+                    continue;
+                }
+
+                int availableStock = food.getStock() - food.getReservedStock();
+
+                if (availableStock < item.getQuantity()) {
+                    log.warn("Out of stock. foodId={}, requested={}, available={}",
+                            food.getFoodId(), item.getQuantity(), availableStock);
+                    throw new OutOfStockException("Food " + food.getFoodId() + " is out of stock");
+                }
+
+                Reservation reservation = Reservation.builder()
+                        .orderId(order.getOrderId())
+                        .foodId(food.getFoodId())
+                        .reservationCount(item.getQuantity())
+                        .status(ReservationStatus.RESERVED)
+                        .build();
+                reservationRepository.save(reservation);
+
+                food.setReservedStock(food.getReservedStock() + item.getQuantity());
+
+                log.info("Reserved foodId={}, quantity={}", food.getFoodId(), item.getQuantity());
+
+                reservedItems.add(buildReservationItem(food, item));
+            }
+
+            log.info("Reservation successful for orderId={}", order.getOrderId());
+
+            return Mono.just(ReservationResult.builder()
+                    .orderId(order.getOrderId())
+                    .reservationItems(reservedItems)
+                    .reservationStatus(ReservationStatus.RESERVED)
+                    .build());
+
+        } catch (Exception e) {
+            log.error("Reservation failed for orderId={}", order.getOrderId(), e);
+            throw new InventoryProcessingException("Reservation processing failed", e);
+        }
+    }
+
+    @Transactional
+    @Override
+    public Mono<Void> confirm(Long orderId) {
+
+        List<Reservation> reservations = reservationRepository.getByOrderId(orderId);
+
+        if (reservations.isEmpty()) {
+            throw new ReservationNotFoundException("No reservations found for orderId=" + orderId);
+        }
+
+        log.info("Confirming reservations for orderId={}, count={}", orderId, reservations.size());
+
+        for (Reservation reservation : reservations) {
+
+            if (ReservationStatus.CONFIRMED.equals(reservation.getStatus())
+                    || ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
                 continue;
             }
 
-            int availableStock = food.getStock() - food.getReservedStock();
-
-            if (availableStock < item.getQuantity()) {
-                log.info("The Food product has not enough stock");
-                throw new OutOfStockException("Out of stock");
-            }
-
-            Reservation reservation = Reservation.builder()
-                    .orderId(order.getOrderId())
-                    .foodId(food.getFoodId())
-                    .reservationCount(item.getQuantity())
-                    .status("RESERVED")
-                    .build();
-                    reservationRepository.save(reservation);
-
-            food.setReservedStock(food.getReservedStock() + item.getQuantity());
-
-            reservedItems.add(ReservationItem.builder()
-                    .foodId(food.getFoodId())
-                    .quantity(item.getQuantity())
-                    .build());
-        }
-
-        log.info("Exiting InventoryController::reserve()");
-        return Mono.just(ReservationResult.builder()
-                .orderId(order.getOrderId())
-                .reservationItems(reservedItems)
-                .reservationStatus("RESERVED")
-                .build());
-
-    }
-
-    @Override
-    @Transactional
-    public Mono<Void> confirm(Long orderId) {
-        log.info("Entering InventoryController::confirm()");
-
-        List<Reservation> reservations = reservationRepository.getByOrderId(orderId);
-
-        for(Reservation reservation : reservations) {
-
-            if (reservation.getStatus().equals("CONFIRMED")) continue;
-            if (reservation.getStatus().equals("CANCELLED")) continue;
-
-            log.info("Confirming reservation...");
             Food food = inventoryRepository.lockFoodById(reservation.getFoodId());
             food.setStock(food.getStock() - reservation.getReservationCount());
 
-            reservation.setStatus("CONFIRMED");
+            reservation.setStatus(ReservationStatus.CONFIRMED);
+
+            log.info("Confirmed reservation. foodId={}, remainingStock={}",
+                    food.getFoodId(), food.getStock());
         }
 
-        log.info("Exiting InventoryController::confirm()");
         return Mono.empty();
     }
 
-    @Override
     @Transactional
+    @Override
     public Mono<Void> cancel(Long orderId) {
-    log.info("Entering InventoryController::cancel()");
 
         List<Reservation> reservations = reservationRepository.getByOrderId(orderId);
 
-        for(Reservation reservation : reservations) {
+        if (reservations.isEmpty()) {
+            throw new ReservationNotFoundException("No reservations found for orderId=" + orderId);
+        }
 
-            if(!reservation.getStatus().equalsIgnoreCase("RESERVED")) continue;
+        log.info("Cancelling reservations for orderId={}, count={}", orderId, reservations.size());
+
+        for (Reservation reservation : reservations) {
+
+            if (!ReservationStatus.RESERVED.equals(reservation.getStatus())) {
+                continue;
+            }
 
             Food food = inventoryRepository.lockFoodById(reservation.getFoodId());
             food.setReservedStock(food.getReservedStock() - reservation.getReservationCount());
 
-            reservation.setStatus("CANCELLED");
+            reservation.setStatus(ReservationStatus.CANCELLED);
 
+            log.info("Cancelled reservation. foodId={}, released={}",
+                    food.getFoodId(), reservation.getReservationCount());
         }
 
-        log.info("Exiting InventoryController::cancel()");
         return Mono.empty();
     }
+
+    private ReservationItem buildReservationItem(Food food, OrderItemDto item) {
+        return ReservationItem.builder()
+                .foodId(food.getFoodId())
+                .quantity(item.getQuantity())
+                .build();
+    }
+
 
 }
 

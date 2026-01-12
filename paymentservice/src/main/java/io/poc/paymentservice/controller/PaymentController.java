@@ -16,23 +16,26 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/api/v1/payment-service")
 public class PaymentController {
 
+    private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
+
     private final PaymentService paymentService;
-    private final Logger log = LoggerFactory.getLogger(PaymentController.class);
 
     public PaymentController(PaymentService paymentService) {
         this.paymentService = paymentService;
-        log.info("Initializing PaymentController");
+        log.info("PaymentController initialized");
     }
 
-    @PostMapping(path = "pay")
-    public ResponseEntity<Mono<PaymentDto>> payment(@RequestBody OrderDto order) {
-        log.info("Entering PaymentController::makePayment");
+    @PostMapping("/pay")
+    public Mono<PaymentDto> payment(@RequestBody OrderDto order) {
 
-        log.info("Order details: {}", order);
+        log.info("Payment request received for orderId={}", order.getOrderId());
 
-        Mono<PaymentDto> paymentDto = paymentService.pay(order);
-        log.info("Exiting PaymentController::makePayment");
-
-        return ResponseEntity.ok(paymentDto);
+        return paymentService.pay(order)
+                .doOnSuccess(p ->
+                        log.info("Payment processed for orderId={}, status={}",
+                                order.getOrderId(), p.getStatus()))
+                .doOnError(e ->
+                        log.error("Payment failed for orderId={}", order.getOrderId(), e));
     }
 }
+

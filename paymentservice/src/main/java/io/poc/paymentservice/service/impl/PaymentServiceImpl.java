@@ -1,7 +1,10 @@
 package io.poc.paymentservice.service.impl;
 
+import io.poc.paymentservice.constants.OrderStatus;
+import io.poc.paymentservice.constants.PaymentStatus;
 import io.poc.paymentservice.constants.PaymentType;
 import io.poc.paymentservice.entity.Payment;
+import io.poc.paymentservice.exception.PaymentProcessingException;
 import io.poc.paymentservice.model.OrderDto;
 import io.poc.paymentservice.model.PaymentDto;
 import io.poc.paymentservice.proxy.NotificationProxy;
@@ -19,7 +22,8 @@ import java.time.Duration;
 @Service
 public class PaymentServiceImpl implements PaymentService {
 
-    private static final Logger log = LoggerFactory.getLogger(PaymentServiceImpl.class);
+    private static final Logger log =
+            LoggerFactory.getLogger(PaymentServiceImpl.class);
 
     private final PaymentRepository paymentRepository;
     private final NotificationProxy notificationProxy;
@@ -27,7 +31,6 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Value("${service.inventory}")
     private String INVENTORY_SERVICE;
-
 
     public PaymentServiceImpl(
             PaymentRepository paymentRepository,
@@ -37,98 +40,102 @@ public class PaymentServiceImpl implements PaymentService {
         this.paymentRepository = paymentRepository;
         this.notificationProxy = notificationProxy;
         this.webClient = webClient;
-        log.info("Initializing PaymentServiceImpl");
+        log.info("PaymentService initialized");
     }
 
     @Override
     public Mono<PaymentDto> pay(OrderDto order) {
-        log.info("Entering PaymentServiceImpl::makePayment");
-        log.info("Processing payment for OrderID={} | Amount={} | Email={}",
-                order.getOrderId(), order.getOrderValue(), order.getEmail());
 
-        String orderStatus = order.getOrderStatus();
+        log.info("Processing payment for orderId={}, amount={}",
+                order.getOrderId(), order.getOrderValue());
 
-        if (orderStatus.equalsIgnoreCase("RESERVED")) {
+        if (!OrderStatus.RESERVED.equalsIgnoreCase(order.getOrderStatus())) {
+            log.warn("Order is not in RESERVED state. orderId={}, status={}",
+                    order.getOrderId(), order.getOrderStatus());
 
-            Payment payment = Payment.builder()
+            return Mono.just(PaymentDto.builder()
                     .orderId(order.getOrderId())
                     .amount(order.getOrderValue())
-                    .paymentType(PaymentType.UPI.name())
-                    .status("COMPLETE")
-                    .build();
-
-            log.info("Persisting Payment entity...");
-            Payment persistedPayment = paymentRepository.save(payment);
-
-            if (persistedPayment.getStatus().equalsIgnoreCase("COMPLETE")) {
-
-                log.info("Payment persisted with ID={} for OrderID={}",
-                        persistedPayment.getPaymentId(), persistedPayment.getOrderId());
-
-                log.info("Triggering notification to {}",
-                        order.getEmail());
-
-                order.setOrderStatus("ORDER_PLACED");
-                notificationProxy.notifyUser(order);
-
-                log.info("Exiting PaymentServiceImpl::makePayment");
-
-                return confirm(persistedPayment.getOrderId())
-                        .thenReturn(PaymentDto.builder()
-                                .amount(persistedPayment.getAmount())
-                                .paymentType(persistedPayment.getPaymentType())
-                                .status("PAYMENT_COMPLETE")
-                                .build())
-                        .delayElement(Duration.ofSeconds(10))
-                        .doOnSuccess(o -> {
-
-                            log.info("Payment COMPLETE Amount={}",
-                                    persistedPayment.getAmount());
-
-                            persistedPayment.setStatus("PAYMENT_COMPLETE");
-                            paymentRepository.save(persistedPayment);
-
-                        });
-            }
-
-            return cancel(order.getOrderId())
-                    .thenReturn(PaymentDto.builder()
-                            .amount(order.getOrderValue())
-                            .status("CANCELLED")
-                            .build())
-                    .delayElement(Duration.ofSeconds(10))
-                    .doOnSuccess(o -> {
-                        log.info("Payment CANCELLED Amount={}", persistedPayment);
-
-                        persistedPayment.setStatus("PAYMENT_CANCELLED");
-                        paymentRepository.save(persistedPayment);
-                    });
+                    .status(PaymentStatus.ORDER_CREATION_FAILED)
+                    .build());
         }
 
-        return Mono.just(PaymentDto.builder()
+        Payment payment = Payment.builder()
                 .orderId(order.getOrderId())
                 .amount(order.getOrderValue())
-                .status("ORDER_CREATION_FAILED")
-                .build());
+                .paymentType(PaymentType.UPI.name())
+                .status(PaymentStatus.COMPLETE)
+                .build();
+
+        Payment persistedPayment = paymentRepository.save(payment);
+
+        log.info("Payment record created. paymentId={}, orderId={}",
+                persistedPayment.getPaymentId(), persistedPayment.getOrderId());
+
+        return confirm(persistedPayment.getOrderId())
+                .then(Mono.defer(() -> handlePaymentSuccess(persistedPayment, order)))
+                .onErrorResume(ex -> handlePaymentFailure(ex, persistedPayment, order));
+    }
+
+    private Mono<PaymentDto> handlePaymentSuccess(Payment payment, OrderDto order) {
+
+        log.info("Payment successful. orderId={}", order.getOrderId());
+
+        payment.setStatus(PaymentStatus.PAYMENT_COMPLETE);
+        paymentRepository.save(payment);
+
+        order.setOrderStatus(OrderStatus.ORDER_PLACED);
+        notificationProxy.notifyUser(order);
+
+        return Mono.just(PaymentDto.builder()
+                        .orderId(payment.getOrderId())
+                        .amount(payment.getAmount())
+                        .paymentType(payment.getPaymentType())
+                        .status(PaymentStatus.PAYMENT_COMPLETE)
+                        .build())
+                .delayElement(Duration.ofSeconds(10));
+    }
+
+    private Mono<PaymentDto> handlePaymentFailure(Throwable ex, Payment payment, OrderDto order) {
+
+        log.error("Payment failed for orderId={}", order.getOrderId(), ex);
+
+        payment.setStatus(PaymentStatus.PAYMENT_CANCELLED);
+        paymentRepository.save(payment);
+
+        return cancel(order.getOrderId())
+                .thenReturn(PaymentDto.builder()
+                        .orderId(order.getOrderId())
+                        .amount(order.getOrderValue())
+                        .status(PaymentStatus.PAYMENT_CANCELLED)
+                        .build())
+                .delayElement(Duration.ofSeconds(10));
     }
 
     private Mono<Void> confirm(Long orderId) {
+        log.info("Sending inventory confirmation for orderId={}", orderId);
+
         return webClient.post()
                 .uri(INVENTORY_SERVICE + "/reserve/confirm")
                 .bodyValue(orderId)
-                .exchangeToMono(
-                        response -> response.bodyToMono(Void.class)
-                )
-                .doOnSubscribe(subscription -> log.info("Confirmation call sent successfully"));
+                .retrieve()
+                .bodyToMono(Void.class)
+                .timeout(Duration.ofSeconds(10))
+                .onErrorMap(ex -> new PaymentProcessingException(
+                        "Inventory confirmation failed for orderId=" + orderId, ex));
     }
 
     private Mono<Void> cancel(Long orderId) {
+        log.info("Sending inventory cancellation for orderId={}", orderId);
+
         return webClient.post()
                 .uri(INVENTORY_SERVICE + "/reserve/cancel")
                 .bodyValue(orderId)
-                .exchangeToMono(
-                        response -> response.bodyToMono(Void.class)
-                )
-                .doOnSubscribe(subscription -> log.info("Cancellation call sent successfully"));
+                .retrieve()
+                .bodyToMono(Void.class)
+                .timeout(Duration.ofSeconds(10))
+                .onErrorMap(ex -> new PaymentProcessingException(
+                        "Inventory cancellation failed for orderId=" + orderId, ex));
     }
+
 }
