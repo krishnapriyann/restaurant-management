@@ -11,6 +11,4 @@ public interface OrderService {
     List<FoodDto> menu();
 
     Mono<OrderDto> placeOrder(OrderDto order);
-
-    Long calculateOrderValue(Long orderId);
 }

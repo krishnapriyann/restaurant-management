@@ -23,6 +23,8 @@ import reactor.core.publisher.Mono;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -70,13 +72,16 @@ public class OrderServiceImpl implements OrderService {
         return menu;
     }
 
-
     @Override
     public Mono<OrderDto> placeOrder(OrderDto order) {
 
         log.info("Starting order placement for userId={}", order.getUserId());
 
-        List<OrderItem> orderItems = buildOrderItems(order);
+        List<FoodDto> menu = menu();
+        Map<Long, FoodDto> mappedMenu =
+                menu.stream().collect(Collectors.toMap(FoodDto::getId, f -> f));
+
+        List<OrderItem> orderItems = buildOrderItems(order, mappedMenu);
 
         Order createdOrder = persistOrder(order, OrderStatus.CREATED, orderItems);
         log.info("Order created with status={}, orderId={}",
@@ -139,7 +144,7 @@ public class OrderServiceImpl implements OrderService {
                         log.info("Payment successful for orderId={}", savedReservedOrder.getOrderId());
                         savedReservedOrder.setOrderStatus(OrderStatus.COMPLETED);
                     } else {
-                        log.warn("Payment cancelled for orderId={}", savedReservedOrder.getOrderId());
+                        log.info("Payment cancelled for orderId={}", savedReservedOrder.getOrderId());
                         savedReservedOrder.setOrderStatus(OrderStatus.CANCELLED);
                     }
 
@@ -168,14 +173,21 @@ public class OrderServiceImpl implements OrderService {
                 .build();
     }
 
-    private List<OrderItem> buildOrderItems(OrderDto orderRequest) {
+    private List<OrderItem> buildOrderItems(OrderDto orderRequest, Map<Long, FoodDto> menu) {
         return orderRequest.getItems()
                 .stream()
-                .map(item -> OrderItem.builder()
-                        .foodId(item.getFoodId())
-                        .quantity(item.getQuantity())
-                        .price(item.getPrice())
-                        .build())
+                .map(item -> {
+                    FoodDto food = menu.get(item.getFoodId());
+                    if (food == null) {
+                        throw new InventoryServiceException("Invalid foodId: " + item.getFoodId());
+                    }
+
+                    return OrderItem.builder()
+                            .foodId(item.getFoodId())
+                            .quantity(item.getQuantity())
+                            .price(food.getPrice())
+                            .build();
+                })
                 .toList();
     }
 
@@ -189,16 +201,25 @@ public class OrderServiceImpl implements OrderService {
                 .toList();
     }
 
+    private Long calculateTotal(List<OrderItem> items) {
+        return items.stream()
+                .mapToLong(i -> i.getPrice() * i.getQuantity())
+                .sum();
+    }
+
     private Order setOrderStatus(OrderDto orderDto, String status, List<OrderItem> items) {
+        Long total = calculateTotal(items);
+
         return Order.builder()
                 .items(items)
                 .userId(orderDto.getUserId())
-                .orderValue(orderDto.getOrderValue())
+                .orderValue(total)
                 .orderStatus(status)
                 .email(orderDto.getEmail())
                 .createdAt(Timestamp.valueOf(LocalDateTime.now()))
                 .build();
     }
+
 
     Mono<ReservationResult> reservation(OrderDto orderDto) {
         log.info("Calling Inventory service for reservation. orderId={}", orderDto.getOrderId());
@@ -206,12 +227,15 @@ public class OrderServiceImpl implements OrderService {
         return webClient.post()
                 .uri(INVENTORY_SERVICE + "/reserve")
                 .bodyValue(orderDto)
-                .retrieve()
-                .bodyToMono(ReservationResult.class)
-//                .timeout(Duration.ofSeconds(10))
-                .onErrorMap(ex -> {
-                    log.error("Inventory service call failed for orderId={}", orderDto.getOrderId(), ex);
-                    return new InventoryServiceException("Inventory service unavailable");
+                .exchangeToMono(response -> {
+                    if (response.statusCode().isError()) {
+                        return response.bodyToMono(String.class)
+                                .flatMap(body -> {
+                                    log.error("Inventory error response: {}", body);
+                                    return Mono.error(new InventoryServiceException(body));
+                                });
+                    }
+                    return response.bodyToMono(ReservationResult.class);
                 });
     }
 
@@ -223,18 +247,10 @@ public class OrderServiceImpl implements OrderService {
                 .bodyValue(order)
                 .retrieve()
                 .bodyToMono(PaymentDto.class)
-//                .timeout(Duration.ofSeconds(10))
                 .onErrorMap(ex -> {
                     log.error("Payment service call failed for orderId={}", order.getOrderId(), ex);
                     return new PaymentServiceException("Payment service unavailable");
                 });
-    }
-
-//    Feature : To calculate total order value in the backend.
-    @Override
-    public Long calculateOrderValue(Long orderId) {
-        log.info("OrderServiceImpl::calculateOrderValue called for orderId={}", orderId);
-        return 0L;
     }
 
 }

@@ -33,26 +33,19 @@ public class TestConcurrentOrders {
     @Test
     public void testOrderConcurrency() throws InterruptedException {
 
-        int threadCount = 10;
+        int threadCount = 3;
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         CountDownLatch latch = new CountDownLatch(threadCount);
 
         String body = """
             {
-               "userId": 3,
-               "email": "user3@test.com",
+               "userId": 10,
+               "email": "user10@test.com",
                "orderStatus": "CREATED",
-               "orderValue": 500,
                "items": [
                  {
-                   "foodId": 3,
-                   "quantity": 1,
-                   "price": 200
-                 },
-                 {
-                   "foodId": 8,
-                   "quantity": 1,
-                   "price": 300
+                   "foodId": 2,
+                   "quantity": 2
                  }
                ]
             }

@@ -51,22 +51,18 @@ public class InventoryController {
     }
 
     @PostMapping("/reserve/confirm")
-    public ResponseEntity<Void> reserveConfirm(@RequestParam Long orderId) {
+    public Mono<Void> reserveConfirm(@RequestParam Long orderId) {
         log.info("Confirming reservation for orderId={}", orderId);
 
-        inventoryService.confirm(orderId);
-
-        log.info("Reservation confirmed for orderId={}", orderId);
-        return ResponseEntity.ok().build();
+        return inventoryService.confirm(orderId)
+                .doOnSuccess(v -> log.info("Reservation confirmed for orderId={}", orderId));
     }
 
+
     @PostMapping("/reserve/cancel")
-    public ResponseEntity<Void> reserveCancel(@RequestParam Long orderId) {
+    public Mono<Void> reserveCancel(@RequestParam Long orderId) {
         log.info("Cancelling reservation for orderId={}", orderId);
 
-        inventoryService.cancel(orderId);
-
-        log.info("Reservation cancelled for orderId={}", orderId);
-        return ResponseEntity.ok().build();
+        return inventoryService.cancel(orderId).doOnSuccess(v -> log.info("Reservation cancelled for orderId={}", orderId));
     }
 }

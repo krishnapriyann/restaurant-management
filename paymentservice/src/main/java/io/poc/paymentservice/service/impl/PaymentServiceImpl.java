@@ -47,11 +47,11 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     public Mono<PaymentDto> pay(OrderDto order) {
 
-        log.info("Processing payment for orderId={}, amount={}",
-                order.getOrderId(), order.getOrderValue());
+        log.info("Processing payment for orderId={}",
+                order.getOrderId());
 
         if (!OrderStatus.RESERVED.equalsIgnoreCase(order.getOrderStatus())) {
-            log.warn("Order is not in RESERVED state. orderId={}, status={}",
+            log.info("Order is not in RESERVED state. orderId={}, status={}",
                     order.getOrderId(), order.getOrderStatus());
 
             return Mono.just(PaymentDto.builder()

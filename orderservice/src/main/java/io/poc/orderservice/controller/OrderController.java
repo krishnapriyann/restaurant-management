@@ -40,17 +40,17 @@ public class OrderController {
     }
 
     @PostMapping("/order-confirmation")
-    public Mono<ResponseEntity<OrderDto>> placeOrder(
+    public Mono<OrderDto> placeOrder(
             @Valid @RequestBody OrderDto orderRequest) {
         log.info("Placing order request");
 
         if (orderRequest == null) {
-            return Mono.error(new InvalidOrderException("Order request cannot be null"));
+            throw new InvalidOrderException("Order request cannot be null");
         }
 
         return orderService.placeOrder(orderRequest)
-                .map(ResponseEntity::ok)
-                .doOnSuccess(r -> log.info("Order placed successfully"))
-                .doOnError(e -> log.error("Order placement failed", e));
+                .doOnSuccess(order -> log.info("Order placed successfully"))
+                .doOnError(throwable -> log.error("Error while placing order", throwable));
+
     }
 }
