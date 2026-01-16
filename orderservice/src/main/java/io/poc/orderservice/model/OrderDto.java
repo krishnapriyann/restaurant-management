@@ -24,8 +24,6 @@ public class OrderDto {
     @NotNull(message = "User ID is mandatory")
     private Long userId;
 
-    @NotNull(message = "Order value is mandatory")
-    @Positive(message = "Order value must be greater than zero")
     private Long orderValue;
 
     @NotBlank(message = "Order status is mandatory")
