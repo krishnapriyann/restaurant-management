@@ -98,14 +98,13 @@ public class OrderServiceImpl implements OrderService {
                 });
     }
 
-
     private Mono<OrderDto> handleReservationResult(
             ReservationResult result,
             Order savedOrder,
             OrderDto orderDto) {
 
         if (result == null) {
-            log.error("Reservation response is null for orderId={}", savedOrder.getOrderId());
+            log.info("Reservation response is null for orderId={}", savedOrder.getOrderId());
             return Mono.error(new InventoryServiceException("Inventory service returned null"));
         }
 
@@ -114,14 +113,18 @@ public class OrderServiceImpl implements OrderService {
 
         if (OrderStatus.RESERVED.equalsIgnoreCase(result.getReservationStatus())) {
             log.info("Inventory reserved successfully for orderId={}", savedOrder.getOrderId());
+            orderDto.setInventoryStatus("RESERVED and reservation count = " + result.getReservationItems().size());
+
             return processPayment(savedOrder, orderDto);
         }
 
-        log.warn("Reservation failed for orderId={}", savedOrder.getOrderId());
+        log.info("Reservation failed for orderId={}", savedOrder.getOrderId());
         savedOrder.setOrderStatus(OrderStatus.FAILED);
         Order failed = orderRepository.save(savedOrder);
 
-        return Mono.just(buildOrderDto(failed));
+        OrderDto fail = buildOrderDto(failed);
+        fail.setInventoryStatus("RESERVATION_FAILED and reservation status = " + result.getReservationStatus());
+        return Mono.just(fail);
     }
 
     private Mono<OrderDto> processPayment(Order reservedOrder, OrderDto orderDto) {
@@ -129,12 +132,13 @@ public class OrderServiceImpl implements OrderService {
         reservedOrder.setOrderStatus(OrderStatus.RESERVED);
         Order savedReservedOrder = orderRepository.save(reservedOrder);
         orderDto.setOrderStatus(OrderStatus.RESERVED);
+        orderDto.setPaymentStatus("PAYMENT_INITIATED for orderId = " + savedReservedOrder.getOrderId());
 
         log.info("Initiating payment for orderId={}", savedReservedOrder.getOrderId());
 
         return pay(orderDto)
                 .flatMap(payment -> {
-
+                    System.out.println(payment);
                     if (payment == null) {
                         log.error("Payment response is null for orderId={}", savedReservedOrder.getOrderId());
                         return Mono.error(new PaymentServiceException("Payment service returned null"));
@@ -143,6 +147,7 @@ public class OrderServiceImpl implements OrderService {
                     if (!"PAYMENT_CANCELLED".equalsIgnoreCase(payment.getStatus())) {
                         log.info("Payment successful for orderId={}", savedReservedOrder.getOrderId());
                         savedReservedOrder.setOrderStatus(OrderStatus.COMPLETED);
+
                     } else {
                         log.info("Payment cancelled for orderId={}", savedReservedOrder.getOrderId());
                         savedReservedOrder.setOrderStatus(OrderStatus.CANCELLED);
@@ -152,10 +157,13 @@ public class OrderServiceImpl implements OrderService {
                     log.info("Final order state persisted. orderId={}, status={}",
                             finalOrder.getOrderId(), finalOrder.getOrderStatus());
 
-                    return Mono.just(buildOrderDto(finalOrder));
+                    OrderDto payed = buildOrderDto(finalOrder);
+                    payed.setInventoryStatus(payment.getIsStockConfirmed());
+                    payed.setPaymentStatus("Payment Service hit for order Id = " + savedReservedOrder.getOrderId());
+                    payed.setNotificationStatus(payment.getIsNotified());
+                    return Mono.fromCallable(() -> payed);
                 });
     }
-
 
     private Order persistOrder(OrderDto orderDto, String status, List<OrderItem> items) {
         Order order = setOrderStatus(orderDto, status, items);

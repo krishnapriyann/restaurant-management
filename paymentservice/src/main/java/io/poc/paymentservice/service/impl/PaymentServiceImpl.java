@@ -58,6 +58,8 @@ public class PaymentServiceImpl implements PaymentService {
                     .orderId(order.getOrderId())
                     .amount(order.getOrderValue())
                     .status(PaymentStatus.ORDER_CREATION_FAILED)
+                    .isStockConfirmed("PAYMENT_FAILED since order creation is unsuccessful")
+                    .isNotified(false)
                     .build());
         }
 
@@ -92,15 +94,21 @@ public class PaymentServiceImpl implements PaymentService {
 //        and fromRunnable is used because -> when subscribed run this action,
 //        but do not emit a value.
 
-        return Mono.fromRunnable(() -> notificationProxy.notifyUser(order))
+        return Mono.fromCallable(() -> {
+                    Boolean notification = notificationProxy.notifyUser(order).getBody();
+                    System.out.println(notification);
+                    return notification;
+                })
                 .subscribeOn(Schedulers.boundedElastic())
-                .then(Mono.just(PaymentDto.builder()
+                .flatMap(notification -> Mono.just(PaymentDto.builder()
                         .orderId(payment.getOrderId())
                         .amount(payment.getAmount())
                         .paymentType(payment.getPaymentType())
                         .status(PaymentStatus.PAYMENT_COMPLETE)
-                        .build())
-                .delayElement(Duration.ofSeconds(1)));
+                        .isStockConfirmed("Stock Reduced successfully")
+                        .isNotified(notification != null && notification)
+                        .build()))
+                .delayElement(Duration.ofSeconds(1));
     }
 
     private Mono<PaymentDto> handlePaymentFailure(Throwable ex, Payment payment, OrderDto order) {
@@ -115,6 +123,8 @@ public class PaymentServiceImpl implements PaymentService {
                         .orderId(order.getOrderId())
                         .amount(order.getOrderValue())
                         .status(PaymentStatus.PAYMENT_CANCELLED)
+                        .isStockConfirmed("Stock retained")
+                        .isNotified(false)
                         .build())
                 .delayElement(Duration.ofSeconds(10));
     }

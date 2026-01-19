@@ -14,4 +14,6 @@ public class PaymentDto {
     private Long amount;
     private String paymentType;
     private String status;
+    private String isStockConfirmed;
+    private Boolean isNotified;
 }
