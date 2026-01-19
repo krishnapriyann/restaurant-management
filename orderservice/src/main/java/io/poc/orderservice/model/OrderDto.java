@@ -32,4 +32,10 @@ public class OrderDto {
     @NotBlank(message = "Email is mandatory")
     @Email(message = "Email must be valid")
     private String email;
+
+    private String inventoryStatus;
+
+    private String paymentStatus;
+
+    private Boolean notificationStatus;
 }

@@ -67,7 +67,7 @@ public class ReservationTxServiceImpl implements ReservationTransactionService {
                 int availableStock = food.getStock() - food.getReservedStock();
 
                 if (availableStock < item.getQuantity()) {
-                    log.warn("Out of stock. foodId={}, requested={}, available={}",
+                    log.info("Out of stock. foodId={}, requested={}, available={}",
                             food.getFoodId(), item.getQuantity(), availableStock);
                     throw new OutOfStockException("Food " + food.getFoodId() + " is out of stock");
                 }
